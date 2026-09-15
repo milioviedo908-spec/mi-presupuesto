@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: mi-presupuesto
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: DATABASE_URL
+        sync: false   # la cargás vos a mano en el dashboard de Render (ver README)

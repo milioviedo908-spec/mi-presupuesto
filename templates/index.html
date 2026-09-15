@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mi Presupuesto</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__mark">$</div>
+    <div>
+      <h1>Mi Presupuesto</h1>
+      <p class="topbar__sub" id="mes-actual">Ciclo en curso</p>
+    </div>
+  </header>
+
+  <main>
+    <!-- CONFIGURACIÓN -->
+    <section class="card" id="seccion-config">
+      <h2>Tu sueldo del mes</h2>
+      <p class="hint">Definí el sueldo y cómo lo repartís entre gastos y ahorro.</p>
+      <form id="form-config" class="grid-3">
+        <label>Sueldo total
+          <input type="number" id="in-sueldo" min="0" step="0.01" required />
+        </label>
+        <label>Para gastos
+          <input type="number" id="in-gastos" min="0" step="0.01" required />
+        </label>
+        <label>Para ahorrar
+          <input type="number" id="in-ahorro" min="0" step="0.01" required />
+        </label>
+        <button type="submit" class="btn btn--primary">Guardar reparto</button>
+      </form>
+      <p class="alerta" id="config-alerta"></p>
+    </section>
+
+    <!-- BARRAS GENERALES -->
+    <section class="card" id="seccion-overview">
+      <div class="overview">
+        <div class="overview__item">
+          <span class="overview__label">Gastos</span>
+          <div class="barra"><div class="barra__fill barra__fill--gastos" id="barra-gastos"></div></div>
+          <span class="overview__valor" id="txt-gastos">$0 / $0</span>
+        </div>
+        <div class="overview__item">
+          <span class="overview__label">Ahorro</span>
+          <div class="barra"><div class="barra__fill barra__fill--ahorro" id="barra-ahorro"></div></div>
+          <span class="overview__valor" id="txt-ahorro">$0 / $0</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- NUEVA CATEGORÍA -->
+    <section class="card">
+      <h2>Categorías del mes</h2>
+      <p class="hint">Cada categoría es un gasto con un tope. Marcala como <strong>activo</strong> (suma a tu patrimonio, ej. inversión, ahorro en dólares, herramienta de trabajo) o <strong>pasivo</strong> (solo sale de tu bolsillo, ej. alquiler, salidas, servicios).</p>
+      <form id="form-categoria" class="grid-3">
+        <label>Nombre
+          <input type="text" id="cat-nombre" placeholder="Ej: Alquiler" required />
+        </label>
+        <label>Tipo
+          <select id="cat-tipo">
+            <option value="pasivo">Pasivo</option>
+            <option value="activo">Activo</option>
+          </select>
+        </label>
+        <label>Monto tope
+          <input type="number" id="cat-monto" min="0" step="0.01" required />
+        </label>
+        <button type="submit" class="btn btn--primary">Agregar categoría</button>
+      </form>
+      <p class="alerta" id="categoria-alerta"></p>
+
+      <div id="lista-activos" class="grupo-categorias">
+        <h3>Activos</h3>
+        <div class="categorias" id="cont-activos"></div>
+      </div>
+      <div id="lista-pasivos" class="grupo-categorias">
+        <h3>Pasivos</h3>
+        <div class="categorias" id="cont-pasivos"></div>
+      </div>
+    </section>
+
+    <!-- AHORRO -->
+    <section class="card">
+      <h2>Registrar ahorro</h2>
+      <form id="form-ahorro" class="grid-2">
+        <label>Monto
+          <input type="number" id="ahorro-monto" min="0" step="0.01" required />
+        </label>
+        <label>Descripción
+          <input type="text" id="ahorro-desc" placeholder="Ej: transferencia a plazo fijo" />
+        </label>
+        <button type="submit" class="btn btn--primary">Guardar ahorro</button>
+      </form>
+      <p class="alerta" id="ahorro-alerta"></p>
+      <ul class="lista-movimientos" id="lista-ahorros"></ul>
+    </section>
+
+    <!-- RESUMEN Y CIERRE -->
+    <section class="card">
+      <h2>Resumen del mes</h2>
+      <div id="resumen-contenido" class="resumen"></div>
+      <button id="btn-cerrar-mes" class="btn btn--cierre">Cerrar mes y guardar recuento</button>
+    </section>
+
+    <!-- HISTORIAL -->
+    <section class="card">
+      <h2>Historial de meses cerrados</h2>
+      <div id="historial-contenido" class="historial"></div>
+    </section>
+  </main>
+
+  <div class="modal-gasto" id="modal-gasto">
+    <div class="modal-gasto__caja">
+      <h3 id="modal-gasto-titulo">Agregar gasto</h3>
+      <label>Monto
+        <input type="number" id="gasto-monto" min="0" step="0.01" />
+      </label>
+      <label>Descripción
+        <input type="text" id="gasto-desc" placeholder="Opcional" />
+      </label>
+      <p class="alerta" id="gasto-alerta"></p>
+      <div class="modal-gasto__acciones">
+        <button class="btn" id="gasto-cancelar">Cancelar</button>
+        <button class="btn btn--primary" id="gasto-confirmar">Agregar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
