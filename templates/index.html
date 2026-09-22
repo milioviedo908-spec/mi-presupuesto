@@ -5,15 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mi Presupuesto</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="topbar__mark">$</div>
     <div>
       <h1>Mi Presupuesto</h1>
-      <p class="topbar__sub" id="mes-actual">Ciclo en curso</p>
+      <p class="topbar__sub" id="fecha-hora">Ciclo en curso</p>
     </div>
   </header>
 
@@ -35,6 +36,27 @@
         <button type="submit" class="btn btn--primary">Guardar reparto</button>
       </form>
       <p class="alerta" id="config-alerta"></p>
+    </section>
+
+    <!-- ALERTA DE DEUDAS VENCIDAS -->
+    <section class="alerta-deudas" id="alerta-deudas" style="display:none;"></section>
+
+    <!-- INGRESOS -->
+    <section class="card">
+      <h2>Registrar ingreso</h2>
+      <p class="hint">Anotá cada entrada de plata (sueldo, adelantos, changas). Se reinicia cada vez que cerrás el mes.</p>
+      <form id="form-ingreso" class="grid-2">
+        <label>Monto
+          <input type="number" id="ingreso-monto" min="0" step="0.01" required />
+        </label>
+        <label>Descripción
+          <input type="text" id="ingreso-desc" placeholder="Ej: Sueldo septiembre" />
+        </label>
+        <button type="submit" class="btn btn--primary">Guardar ingreso</button>
+      </form>
+      <p class="alerta" id="ingreso-alerta"></p>
+      <p class="overview__valor overview__valor--claro" id="txt-ingresos-total">Total del mes: $0</p>
+      <ul class="lista-movimientos" id="lista-ingresos"></ul>
     </section>
 
     <!-- BARRAS GENERALES -->
@@ -100,10 +122,34 @@
       <ul class="lista-movimientos" id="lista-ahorros"></ul>
     </section>
 
+    <!-- DEUDAS -->
+    <section class="card">
+      <h2>Deudas</h2>
+      <p class="hint">Cargá lo que debés y su fecha límite. Si se pasa la fecha y no está saldada, te avisamos arriba de todo.</p>
+      <form id="form-deuda" class="grid-3">
+        <label>Nombre
+          <input type="text" id="deuda-nombre" placeholder="Ej: Tarjeta Visa" required />
+        </label>
+        <label>Monto total
+          <input type="number" id="deuda-monto" min="0" step="0.01" required />
+        </label>
+        <label>Vence el
+          <input type="date" id="deuda-vencimiento" />
+        </label>
+        <button type="submit" class="btn btn--primary">Agregar deuda</button>
+      </form>
+      <p class="alerta" id="deuda-alerta"></p>
+      <div class="deudas" id="cont-deudas"></div>
+    </section>
+
     <!-- RESUMEN Y CIERRE -->
     <section class="card">
       <h2>Resumen del mes</h2>
       <div id="resumen-contenido" class="resumen"></div>
+      <div class="grafico-caja">
+        <canvas id="grafico-gastos"></canvas>
+        <p class="hint" id="grafico-vacio" style="display:none;">Todavía no cargaste gastos este mes para graficar.</p>
+      </div>
       <button id="btn-cerrar-mes" class="btn btn--cierre">Cerrar mes y guardar recuento</button>
     </section>
 
@@ -127,6 +173,20 @@
       <div class="modal-gasto__acciones">
         <button class="btn" id="gasto-cancelar">Cancelar</button>
         <button class="btn btn--primary" id="gasto-confirmar">Agregar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-gasto" id="modal-pago">
+    <div class="modal-gasto__caja">
+      <h3 id="modal-pago-titulo">Registrar pago</h3>
+      <label>Monto que pagás
+        <input type="number" id="pago-monto" min="0" step="0.01" />
+      </label>
+      <p class="alerta" id="pago-alerta"></p>
+      <div class="modal-gasto__acciones">
+        <button class="btn" id="pago-cancelar">Cancelar</button>
+        <button class="btn btn--primary" id="pago-confirmar">Registrar</button>
       </div>
     </div>
   </div>
