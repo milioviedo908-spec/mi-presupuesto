@@ -72,6 +72,36 @@ class Cierre(db.Model):
     resumen_json = db.Column(db.Text, nullable=False)
 
 
+class Ingreso(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    monto = db.Column(db.Float, nullable=False)
+    descripcion = db.Column(db.String(255))
+    fecha = db.Column(db.String(40), nullable=False)
+
+    def to_dict(self):
+        return {'id': self.id, 'monto': self.monto, 'descripcion': self.descripcion, 'fecha': self.fecha}
+
+
+class Deuda(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nombre = db.Column(db.String(120), nullable=False)
+    monto_total = db.Column(db.Float, nullable=False)
+    monto_pagado = db.Column(db.Float, nullable=False, default=0)
+    fecha_vencimiento = db.Column(db.String(20))  # 'YYYY-MM-DD', opcional
+    fecha_creacion = db.Column(db.String(40), nullable=False)
+    activa = db.Column(db.Boolean, nullable=False, default=True)
+
+    def to_dict(self):
+        pendiente = self.monto_total - self.monto_pagado
+        vencida = False
+        if self.fecha_vencimiento and pendiente > 1e-9:
+            vencida = self.fecha_vencimiento < datetime.now().strftime('%Y-%m-%d')
+        return {'id': self.id, 'nombre': self.nombre, 'monto_total': self.monto_total,
+                'monto_pagado': self.monto_pagado, 'pendiente': pendiente,
+                'fecha_vencimiento': self.fecha_vencimiento, 'vencida': vencida,
+                'saldada': pendiente <= 1e-9}
+
+
 with app.app_context():
     db.create_all()
     if db.session.get(Config, 1) is None:
@@ -212,6 +242,92 @@ def add_ahorro():
     return jsonify({'ok': True})
 
 
+# ---------- Ingresos (sueldo, etc) ----------
+
+@app.route('/api/ingresos', methods=['GET'])
+def get_ingresos():
+    rows = Ingreso.query.order_by(Ingreso.fecha.desc()).all()
+    total = sum(i.monto for i in rows)
+    return jsonify({'items': [i.to_dict() for i in rows], 'total': total})
+
+
+@app.route('/api/ingresos', methods=['POST'])
+def add_ingreso():
+    data = request.get_json(force=True)
+    try:
+        monto = float(data.get('monto', 0))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'El monto debe ser un número'}), 400
+    descripcion = (data.get('descripcion') or '').strip()
+    if monto <= 0:
+        return jsonify({'error': 'El monto tiene que ser mayor a 0'}), 400
+    db.session.add(Ingreso(monto=monto, descripcion=descripcion, fecha=datetime.now().isoformat()))
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/ingresos/<int:ingreso_id>', methods=['DELETE'])
+def delete_ingreso(ingreso_id):
+    ingreso = db.session.get(Ingreso, ingreso_id)
+    if ingreso:
+        db.session.delete(ingreso)
+        db.session.commit()
+    return jsonify({'ok': True})
+
+
+# ---------- Deudas ----------
+
+@app.route('/api/deudas', methods=['GET'])
+def get_deudas():
+    rows = Deuda.query.filter_by(activa=True).order_by(Deuda.fecha_vencimiento.asc().nulls_last()).all()
+    deudas = [d.to_dict() for d in rows]
+    return jsonify(deudas)
+
+
+@app.route('/api/deudas', methods=['POST'])
+def add_deuda():
+    data = request.get_json(force=True)
+    nombre = (data.get('nombre') or '').strip()
+    fecha_vencimiento = (data.get('fecha_vencimiento') or '').strip() or None
+    try:
+        monto_total = float(data.get('monto_total', 0))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'El monto debe ser un número'}), 400
+    if not nombre or monto_total <= 0:
+        return jsonify({'error': 'Completá nombre y un monto mayor a 0'}), 400
+    db.session.add(Deuda(nombre=nombre, monto_total=monto_total, monto_pagado=0,
+                          fecha_vencimiento=fecha_vencimiento, fecha_creacion=datetime.now().isoformat(),
+                          activa=True))
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/deudas/<int:deuda_id>/pago', methods=['POST'])
+def pagar_deuda(deuda_id):
+    data = request.get_json(force=True)
+    try:
+        monto = float(data.get('monto', 0))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'El monto debe ser un número'}), 400
+    deuda = db.session.get(Deuda, deuda_id)
+    if not deuda or not deuda.activa:
+        return jsonify({'error': 'Esa deuda no existe'}), 404
+    if monto <= 0:
+        return jsonify({'error': 'El monto tiene que ser mayor a 0'}), 400
+    deuda.monto_pagado = min(deuda.monto_total, deuda.monto_pagado + monto)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/deudas/<int:deuda_id>', methods=['DELETE'])
+def delete_deuda(deuda_id):
+    deuda = db.session.get(Deuda, deuda_id)
+    if deuda:
+        deuda.activa = False
+        db.session.commit()
+    return jsonify({'ok': True})
+
+
 # ---------- Resumen y cierre ----------
 
 def _resumen_dict():
@@ -234,6 +350,7 @@ def _resumen_dict():
             pasivos_asig += cat.monto_asignado
             pasivos_gast += gastado
     total_ahorrado = sum(a.monto for a in Ahorro.query.all())
+    total_ingresos = sum(i.monto for i in Ingreso.query.all())
     return {
         'config': cfg.to_dict(),
         'detalle': detalle,
@@ -242,6 +359,7 @@ def _resumen_dict():
         'activos': {'asignado': activos_asig, 'gastado': activos_gast},
         'pasivos': {'asignado': pasivos_asig, 'gastado': pasivos_gast},
         'ahorro': {'meta': cfg.monto_ahorro, 'ahorrado': total_ahorrado},
+        'ingresos_total': total_ingresos,
     }
 
 
@@ -260,6 +378,7 @@ def cerrar_mes():
                            resumen_json=json.dumps(resumen_data)))
     Gasto.query.delete()
     Ahorro.query.delete()
+    Ingreso.query.delete()  # las deudas NO se borran: siguen hasta saldarse
     db.session.commit()
     return jsonify({'ok': True, 'resumen': resumen_data})
 
@@ -275,3 +394,19 @@ def historial():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+    
+        
+    
+
+
+
+      
+        
+
+
+
+
+        
+    
+
+
