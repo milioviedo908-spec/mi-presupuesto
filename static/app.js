@@ -5,6 +5,10 @@ async function api(path, options = {}) {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   });
+  if (res.status === 401) {
+    window.location.href = '/login';
+    return new Promise(() => {}); // corta la ejecución, ya estamos redirigiendo
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Ocurrió un error');
   return data;
