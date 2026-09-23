@@ -1,38 +1,71 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
+from flask_login import (LoginManager, UserMixin, login_user, logout_user,
+                          login_required, current_user)
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 import os
 
 app = Flask(__name__)
 
-# Base de datos: en producción usá una Postgres externa (ej. Neon, gratis y
-# permanente) seteando la variable de entorno DATABASE_URL. En tu compu, si
-# no la seteás, se usa un archivo SQLite local (presupuesto.db).
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'clave-de-desarrollo-cambiar-en-produccion')
+
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///' + os.path.join(os.path.dirname(__file__), 'presupuesto.db'))
-if db_url.startswith('postgres://'):  # algunos proveedores dan la URL con el prefijo viejo
+if db_url.startswith('postgres://'):
     db_url = db_url.replace('postgres://', 'postgresql://', 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
 db = SQLAlchemy(app)
 
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
+login_manager.login_message = 'Iniciá sesión para continuar.'
+login_manager.login_message_category = 'error'
+
+
+@login_manager.unauthorized_handler
+def unauthorized():
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Sesión vencida, iniciá sesión de nuevo.'}), 401
+    return redirect(url_for('login'))
+
 
 # ---------- Modelos ----------
 
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    fecha_creacion = db.Column(db.String(40), nullable=False)
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+
 class Config(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
     sueldo = db.Column(db.Float, nullable=False, default=0)
     monto_gastos = db.Column(db.Float, nullable=False, default=0)
     monto_ahorro = db.Column(db.Float, nullable=False, default=0)
 
     def to_dict(self):
-        return {'id': self.id, 'sueldo': self.sueldo,
-                'monto_gastos': self.monto_gastos, 'monto_ahorro': self.monto_ahorro}
+        return {'sueldo': self.sueldo, 'monto_gastos': self.monto_gastos, 'monto_ahorro': self.monto_ahorro}
 
 
 class Categoria(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     nombre = db.Column(db.String(120), nullable=False)
-    tipo = db.Column(db.String(10), nullable=False)  # 'activo' o 'pasivo'
+    tipo = db.Column(db.String(10), nullable=False)
     monto_asignado = db.Column(db.Float, nullable=False, default=0)
     activa = db.Column(db.Boolean, nullable=False, default=True)
     gastos = db.relationship('Gasto', backref='categoria', cascade='all, delete-orphan')
@@ -49,6 +82,7 @@ class Categoria(db.Model):
 
 class Gasto(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     categoria_id = db.Column(db.Integer, db.ForeignKey('categoria.id'), nullable=False)
     monto = db.Column(db.Float, nullable=False)
     descripcion = db.Column(db.String(255))
@@ -57,6 +91,7 @@ class Gasto(db.Model):
 
 class Ahorro(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     monto = db.Column(db.Float, nullable=False)
     descripcion = db.Column(db.String(255))
     fecha = db.Column(db.String(40), nullable=False)
@@ -65,15 +100,9 @@ class Ahorro(db.Model):
         return {'id': self.id, 'monto': self.monto, 'descripcion': self.descripcion, 'fecha': self.fecha}
 
 
-class Cierre(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    mes = db.Column(db.String(20), nullable=False)
-    fecha_cierre = db.Column(db.String(40), nullable=False)
-    resumen_json = db.Column(db.Text, nullable=False)
-
-
 class Ingreso(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     monto = db.Column(db.Float, nullable=False)
     descripcion = db.Column(db.String(255))
     fecha = db.Column(db.String(40), nullable=False)
@@ -84,10 +113,11 @@ class Ingreso(db.Model):
 
 class Deuda(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     nombre = db.Column(db.String(120), nullable=False)
     monto_total = db.Column(db.Float, nullable=False)
     monto_pagado = db.Column(db.Float, nullable=False, default=0)
-    fecha_vencimiento = db.Column(db.String(20))  # 'YYYY-MM-DD', opcional
+    fecha_vencimiento = db.Column(db.String(20))
     fecha_creacion = db.Column(db.String(40), nullable=False)
     activa = db.Column(db.Boolean, nullable=False, default=True)
 
@@ -102,28 +132,97 @@ class Deuda(db.Model):
                 'saldada': pendiente <= 1e-9}
 
 
+class Cierre(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    mes = db.Column(db.String(20), nullable=False)
+    fecha_cierre = db.Column(db.String(40), nullable=False)
+    resumen_json = db.Column(db.Text, nullable=False)
+
+
 with app.app_context():
     db.create_all()
-    if db.session.get(Config, 1) is None:
-        db.session.add(Config(id=1, sueldo=0, monto_gastos=0, monto_ahorro=0))
+
+
+def get_or_create_config():
+    cfg = Config.query.filter_by(user_id=current_user.id).first()
+    if not cfg:
+        cfg = Config(user_id=current_user.id, sueldo=0, monto_gastos=0, monto_ahorro=0)
+        db.session.add(cfg)
         db.session.commit()
+    return cfg
 
 
-# ---------- Páginas ----------
+# ---------- Autenticación ----------
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    error = None
+    if request.method == 'POST':
+        email = (request.form.get('email') or '').strip().lower()
+        password = request.form.get('password') or ''
+        confirmar = request.form.get('confirmar') or ''
+        if not email or '@' not in email:
+            error = 'Ingresá un email válido.'
+        elif len(password) < 6:
+            error = 'La contraseña tiene que tener al menos 6 caracteres.'
+        elif password != confirmar:
+            error = 'Las contraseñas no coinciden.'
+        elif User.query.filter_by(email=email).first():
+            error = 'Ya existe una cuenta con ese email.'
+        else:
+            user = User(email=email, fecha_creacion=datetime.now().isoformat())
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
+            login_user(user)
+            return redirect(url_for('index'))
+    return render_template('register.html', error=error)
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    error = None
+    if request.method == 'POST':
+        email = (request.form.get('email') or '').strip().lower()
+        password = request.form.get('password') or ''
+        user = User.query.filter_by(email=email).first()
+        if user and user.check_password(password):
+            login_user(user)
+            return redirect(url_for('index'))
+        error = 'Email o contraseña incorrectos.'
+    return render_template('login.html', error=error)
+
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('login'))
+
+
+# ---------- Página principal ----------
 
 @app.route('/')
+@login_required
 def index():
-    return render_template('index.html')
+    return render_template('index.html', user_email=current_user.email)
 
 
 # ---------- Config ----------
 
 @app.route('/api/config', methods=['GET'])
+@login_required
 def get_config():
-    return jsonify(db.session.get(Config, 1).to_dict())
+    return jsonify(get_or_create_config().to_dict())
 
 
 @app.route('/api/config', methods=['POST'])
+@login_required
 def set_config():
     data = request.get_json(force=True)
     try:
@@ -132,7 +231,7 @@ def set_config():
         monto_ahorro = float(data.get('monto_ahorro', 0))
     except (TypeError, ValueError):
         return jsonify({'error': 'Los montos deben ser números'}), 400
-    cfg = db.session.get(Config, 1)
+    cfg = get_or_create_config()
     cfg.sueldo, cfg.monto_gastos, cfg.monto_ahorro = sueldo, monto_gastos, monto_ahorro
     db.session.commit()
     return jsonify({'ok': True})
@@ -141,12 +240,14 @@ def set_config():
 # ---------- Categorías ----------
 
 @app.route('/api/categorias', methods=['GET'])
+@login_required
 def get_categorias():
-    cats = Categoria.query.filter_by(activa=True).order_by(Categoria.id).all()
+    cats = Categoria.query.filter_by(user_id=current_user.id, activa=True).order_by(Categoria.id).all()
     return jsonify([c.to_dict() for c in cats])
 
 
 @app.route('/api/categorias', methods=['POST'])
+@login_required
 def add_categoria():
     data = request.get_json(force=True)
     nombre = (data.get('nombre') or '').strip()
@@ -157,14 +258,16 @@ def add_categoria():
         return jsonify({'error': 'El monto asignado debe ser un número'}), 400
     if not nombre or tipo not in ('activo', 'pasivo') or monto_asignado <= 0:
         return jsonify({'error': 'Completá nombre, tipo y un monto asignado mayor a 0'}), 400
-    db.session.add(Categoria(nombre=nombre, tipo=tipo, monto_asignado=monto_asignado, activa=True))
+    db.session.add(Categoria(user_id=current_user.id, nombre=nombre, tipo=tipo,
+                              monto_asignado=monto_asignado, activa=True))
     db.session.commit()
     return jsonify({'ok': True})
 
 
 @app.route('/api/categorias/<int:cat_id>', methods=['DELETE'])
+@login_required
 def delete_categoria(cat_id):
-    cat = db.session.get(Categoria, cat_id)
+    cat = Categoria.query.filter_by(id=cat_id, user_id=current_user.id).first()
     if cat:
         cat.activa = False
         db.session.commit()
@@ -174,6 +277,7 @@ def delete_categoria(cat_id):
 # ---------- Gastos ----------
 
 @app.route('/api/gastos', methods=['POST'])
+@login_required
 def add_gasto():
     data = request.get_json(force=True)
     categoria_id = data.get('categoria_id')
@@ -184,45 +288,41 @@ def add_gasto():
     descripcion = (data.get('descripcion') or '').strip()
     if monto <= 0:
         return jsonify({'error': 'El monto tiene que ser mayor a 0'}), 400
-    cat = Categoria.query.filter_by(id=categoria_id, activa=True).first()
+    cat = Categoria.query.filter_by(id=categoria_id, user_id=current_user.id, activa=True).first()
     if not cat:
         return jsonify({'error': 'Esa categoría no existe'}), 404
     gastado = cat.gastado()
     if gastado + monto > cat.monto_asignado + 1e-9:
         disponible = cat.monto_asignado - gastado
         return jsonify({'error': f'Llegaste al límite de "{cat.nombre}". Disponible: ${disponible:,.2f}'}), 400
-    db.session.add(Gasto(categoria_id=categoria_id, monto=monto, descripcion=descripcion,
-                          fecha=datetime.now().isoformat()))
+    db.session.add(Gasto(user_id=current_user.id, categoria_id=categoria_id, monto=monto,
+                          descripcion=descripcion, fecha=datetime.now().isoformat()))
     db.session.commit()
     return jsonify({'ok': True})
 
 
 @app.route('/api/gastos/<int:gasto_id>', methods=['DELETE'])
+@login_required
 def delete_gasto(gasto_id):
-    gasto = db.session.get(Gasto, gasto_id)
+    gasto = Gasto.query.filter_by(id=gasto_id, user_id=current_user.id).first()
     if gasto:
         db.session.delete(gasto)
         db.session.commit()
     return jsonify({'ok': True})
 
 
-@app.route('/api/gastos', methods=['GET'])
-def list_gastos():
-    rows = db.session.query(Gasto, Categoria).join(Categoria).order_by(Gasto.fecha.desc()).all()
-    return jsonify([{'id': g.id, 'monto': g.monto, 'descripcion': g.descripcion, 'fecha': g.fecha,
-                      'categoria': c.nombre, 'tipo': c.tipo} for g, c in rows])
-
-
 # ---------- Ahorro ----------
 
 @app.route('/api/ahorros', methods=['GET'])
+@login_required
 def get_ahorros():
-    rows = Ahorro.query.order_by(Ahorro.fecha.desc()).all()
+    rows = Ahorro.query.filter_by(user_id=current_user.id).order_by(Ahorro.fecha.desc()).all()
     total = sum(a.monto for a in rows)
     return jsonify({'items': [a.to_dict() for a in rows], 'total': total})
 
 
 @app.route('/api/ahorros', methods=['POST'])
+@login_required
 def add_ahorro():
     data = request.get_json(force=True)
     try:
@@ -232,26 +332,29 @@ def add_ahorro():
     descripcion = (data.get('descripcion') or '').strip()
     if monto <= 0:
         return jsonify({'error': 'El monto tiene que ser mayor a 0'}), 400
-    cfg = db.session.get(Config, 1)
-    total = sum(a.monto for a in Ahorro.query.all())
+    cfg = get_or_create_config()
+    total = sum(a.monto for a in Ahorro.query.filter_by(user_id=current_user.id).all())
     if total + monto > cfg.monto_ahorro + 1e-9:
         disponible = cfg.monto_ahorro - total
         return jsonify({'error': f'Llegaste a la meta de ahorro. Disponible: ${disponible:,.2f}'}), 400
-    db.session.add(Ahorro(monto=monto, descripcion=descripcion, fecha=datetime.now().isoformat()))
+    db.session.add(Ahorro(user_id=current_user.id, monto=monto, descripcion=descripcion,
+                           fecha=datetime.now().isoformat()))
     db.session.commit()
     return jsonify({'ok': True})
 
 
-# ---------- Ingresos (sueldo, etc) ----------
+# ---------- Ingresos ----------
 
 @app.route('/api/ingresos', methods=['GET'])
+@login_required
 def get_ingresos():
-    rows = Ingreso.query.order_by(Ingreso.fecha.desc()).all()
+    rows = Ingreso.query.filter_by(user_id=current_user.id).order_by(Ingreso.fecha.desc()).all()
     total = sum(i.monto for i in rows)
     return jsonify({'items': [i.to_dict() for i in rows], 'total': total})
 
 
 @app.route('/api/ingresos', methods=['POST'])
+@login_required
 def add_ingreso():
     data = request.get_json(force=True)
     try:
@@ -261,14 +364,16 @@ def add_ingreso():
     descripcion = (data.get('descripcion') or '').strip()
     if monto <= 0:
         return jsonify({'error': 'El monto tiene que ser mayor a 0'}), 400
-    db.session.add(Ingreso(monto=monto, descripcion=descripcion, fecha=datetime.now().isoformat()))
+    db.session.add(Ingreso(user_id=current_user.id, monto=monto, descripcion=descripcion,
+                            fecha=datetime.now().isoformat()))
     db.session.commit()
     return jsonify({'ok': True})
 
 
 @app.route('/api/ingresos/<int:ingreso_id>', methods=['DELETE'])
+@login_required
 def delete_ingreso(ingreso_id):
-    ingreso = db.session.get(Ingreso, ingreso_id)
+    ingreso = Ingreso.query.filter_by(id=ingreso_id, user_id=current_user.id).first()
     if ingreso:
         db.session.delete(ingreso)
         db.session.commit()
@@ -278,13 +383,15 @@ def delete_ingreso(ingreso_id):
 # ---------- Deudas ----------
 
 @app.route('/api/deudas', methods=['GET'])
+@login_required
 def get_deudas():
-    rows = Deuda.query.filter_by(activa=True).order_by(Deuda.fecha_vencimiento.asc().nulls_last()).all()
-    deudas = [d.to_dict() for d in rows]
-    return jsonify(deudas)
+    rows = Deuda.query.filter_by(user_id=current_user.id, activa=True) \
+        .order_by(Deuda.fecha_vencimiento.asc().nulls_last()).all()
+    return jsonify([d.to_dict() for d in rows])
 
 
 @app.route('/api/deudas', methods=['POST'])
+@login_required
 def add_deuda():
     data = request.get_json(force=True)
     nombre = (data.get('nombre') or '').strip()
@@ -295,7 +402,7 @@ def add_deuda():
         return jsonify({'error': 'El monto debe ser un número'}), 400
     if not nombre or monto_total <= 0:
         return jsonify({'error': 'Completá nombre y un monto mayor a 0'}), 400
-    db.session.add(Deuda(nombre=nombre, monto_total=monto_total, monto_pagado=0,
+    db.session.add(Deuda(user_id=current_user.id, nombre=nombre, monto_total=monto_total, monto_pagado=0,
                           fecha_vencimiento=fecha_vencimiento, fecha_creacion=datetime.now().isoformat(),
                           activa=True))
     db.session.commit()
@@ -303,14 +410,15 @@ def add_deuda():
 
 
 @app.route('/api/deudas/<int:deuda_id>/pago', methods=['POST'])
+@login_required
 def pagar_deuda(deuda_id):
     data = request.get_json(force=True)
     try:
         monto = float(data.get('monto', 0))
     except (TypeError, ValueError):
         return jsonify({'error': 'El monto debe ser un número'}), 400
-    deuda = db.session.get(Deuda, deuda_id)
-    if not deuda or not deuda.activa:
+    deuda = Deuda.query.filter_by(id=deuda_id, user_id=current_user.id, activa=True).first()
+    if not deuda:
         return jsonify({'error': 'Esa deuda no existe'}), 404
     if monto <= 0:
         return jsonify({'error': 'El monto tiene que ser mayor a 0'}), 400
@@ -320,8 +428,9 @@ def pagar_deuda(deuda_id):
 
 
 @app.route('/api/deudas/<int:deuda_id>', methods=['DELETE'])
+@login_required
 def delete_deuda(deuda_id):
-    deuda = db.session.get(Deuda, deuda_id)
+    deuda = Deuda.query.filter_by(id=deuda_id, user_id=current_user.id).first()
     if deuda:
         deuda.activa = False
         db.session.commit()
@@ -331,8 +440,8 @@ def delete_deuda(deuda_id):
 # ---------- Resumen y cierre ----------
 
 def _resumen_dict():
-    cfg = db.session.get(Config, 1)
-    cats = Categoria.query.filter_by(activa=True).all()
+    cfg = get_or_create_config()
+    cats = Categoria.query.filter_by(user_id=current_user.id, activa=True).all()
     detalle = []
     total_asignado = total_gastado = 0.0
     activos_asig = activos_gast = 0.0
@@ -349,8 +458,8 @@ def _resumen_dict():
         else:
             pasivos_asig += cat.monto_asignado
             pasivos_gast += gastado
-    total_ahorrado = sum(a.monto for a in Ahorro.query.all())
-    total_ingresos = sum(i.monto for i in Ingreso.query.all())
+    total_ahorrado = sum(a.monto for a in Ahorro.query.filter_by(user_id=current_user.id).all())
+    total_ingresos = sum(i.monto for i in Ingreso.query.filter_by(user_id=current_user.id).all())
     return {
         'config': cfg.to_dict(),
         'detalle': detalle,
@@ -364,29 +473,32 @@ def _resumen_dict():
 
 
 @app.route('/api/resumen', methods=['GET'])
+@login_required
 def resumen():
     return jsonify(_resumen_dict())
 
 
 @app.route('/api/cerrar_mes', methods=['POST'])
+@login_required
 def cerrar_mes():
     data = request.get_json(force=True, silent=True) or {}
     mes = data.get('mes') or datetime.now().strftime('%Y-%m')
     import json
     resumen_data = _resumen_dict()
-    db.session.add(Cierre(mes=mes, fecha_cierre=datetime.now().isoformat(),
+    db.session.add(Cierre(user_id=current_user.id, mes=mes, fecha_cierre=datetime.now().isoformat(),
                            resumen_json=json.dumps(resumen_data)))
-    Gasto.query.delete()
-    Ahorro.query.delete()
-    Ingreso.query.delete()  # las deudas NO se borran: siguen hasta saldarse
+    Gasto.query.filter_by(user_id=current_user.id).delete()
+    Ahorro.query.filter_by(user_id=current_user.id).delete()
+    Ingreso.query.filter_by(user_id=current_user.id).delete()
     db.session.commit()
     return jsonify({'ok': True, 'resumen': resumen_data})
 
 
 @app.route('/api/historial', methods=['GET'])
+@login_required
 def historial():
     import json
-    rows = Cierre.query.order_by(Cierre.fecha_cierre.desc()).all()
+    rows = Cierre.query.filter_by(user_id=current_user.id).order_by(Cierre.fecha_cierre.desc()).all()
     return jsonify([{'id': r.id, 'mes': r.mes, 'fecha_cierre': r.fecha_cierre,
                       'resumen': json.loads(r.resumen_json)} for r in rows])
 
@@ -394,19 +506,4 @@ def historial():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-    
-        
-    
-
-
-
-      
-        
-
-
-
-
-        
-    
-
 
