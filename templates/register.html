@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crear cuenta — Mi Presupuesto</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <main class="auth-main">
+    <div class="card auth-card">
+      <div class="topbar__mark auth-mark">$</div>
+      <h2>Crear cuenta</h2>
+      <p class="hint">Cada cuenta tiene su propio presupuesto, separado del resto.</p>
+      {% if error %}<p class="alerta" style="min-height:auto;">{{ error }}</p>{% endif %}
+      <form method="POST" class="auth-form">
+        <label>Email
+          <input type="email" name="email" required autofocus />
+        </label>
+        <label>Contraseña
+          <input type="password" name="password" required minlength="6" />
+        </label>
+        <label>Repetir contraseña
+          <input type="password" name="confirmar" required minlength="6" />
+        </label>
+        <button type="submit" class="btn btn--primary">Crear cuenta</button>
+      </form>
+      <p class="hint">¿Ya tenés cuenta? <a href="{{ url_for('login') }}">Iniciá sesión</a>.</p>
+    </div>
+  </main>
+</body>
+</html>
