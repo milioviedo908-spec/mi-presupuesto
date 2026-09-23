@@ -16,6 +16,10 @@
       <h1>Mi Presupuesto</h1>
       <p class="topbar__sub" id="fecha-hora">Ciclo en curso</p>
     </div>
+    <div class="topbar__usuario">
+      <span>{{ user_email }}</span>
+      <a href="{{ url_for('logout') }}">Salir</a>
+    </div>
   </header>
 
   <main>
