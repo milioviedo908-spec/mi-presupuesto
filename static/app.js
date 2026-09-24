@@ -6,10 +6,8 @@ async function api(path, options = {}) {
     ...options,
   });
   if (res.status === 401) {
-    if(window.location.pathname.includes('/login')){
-      window.location.href=´/login´;
-    }
-    return new Promise(() =>{});
+    window.location.href = '/login';
+    return new Promise(() => {}); // corta la ejecución, ya estamos redirigiendo
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Ocurrió un error');
@@ -20,7 +18,6 @@ let categoriaSeleccionada = null;
 let deudaSeleccionada = null;
 let graficoGastos = null;
 
-// Paleta para el gráfico (arranca en los tonos de la app y suma variedad)
 const PALETA_GRAFICO = ['#AEE62B', '#0E2A1D', '#FF5A44', '#3E8ED0', '#F2B705', '#8E5AE2', '#2AA876', '#C97B3E'];
 
 function mostrarAlerta(id, mensaje) {
